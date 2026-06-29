@@ -28,6 +28,12 @@ Authority order (lower wins): **ADR > Technical-Context > business-domain-contex
 
 ## Dev commands
 
-<!-- TODO(init): fill once the stack is chosen — install / test tiers / run.
-     Written by /init-tech-context or the first feature build. -->
-_Dev commands not set yet — filled when the stack is chosen (`/init-tech-context`)._
+Stack: **.NET 10 / WPF (C#)**. See `Technical-Context.MD` for the full engineering contract.
+
+- **Restore:** `dotnet restore`
+- **Build:** `dotnet build`
+- **Run (local dev):** `dotnet run`
+- **Test:** `dotnet test`
+
+<!-- These are the standard .NET commands; refine once the solution/project files land. -->
+_Test tiers (recorded-replay / live-disposable / live) are defined in `Technical-Context.MD` → Testing & the ratchet._
