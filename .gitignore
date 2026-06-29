@@ -1,0 +1,21 @@
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+
+# Secrets & local env
+.env
+.env.*
+*.local
+
+# Build output
+dist/
+build/
+out/
+
+# AFK orchestrator run artifacts — never commit
+.orchestrator/
