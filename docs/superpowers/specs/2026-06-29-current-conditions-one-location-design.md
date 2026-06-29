@@ -173,17 +173,33 @@ project as the Tier-1 replay fixture.
 ### Seam 2: Serilog → rolling log file
 - **(a) class:** `persistent-on-disk-state` (+ `host-OS` for the path & directory creation), **external** (the host filesystem).
 - **(b) sides:** the app's Serilog logger (`OpenMeteoWeatherProvider` / bootstrap) ↔ the Windows filesystem under `%LOCALAPPDATA%`.
-- **(c) contract:** Serilog is configured with a rolling **file** sink rooted at
-  `%LOCALAPPDATA%\SimpleDesktopWeatherApp\logs\`; the directory is created if absent (host-OS
-  path contract — must not throw if the folder does not yet exist). A successful fetch emits one
-  INFO event carrying the request URL, HTTP status, and latency; a failed fetch emits one ERROR
-  event carrying the exception and stack trace. No log content is ever surfaced in the UI.
-  Nullability: the log directory path resolves from `%LOCALAPPDATA%` (always set on Windows); if
-  unresolvable the app falls back to a relative `logs\` folder rather than crashing.
-- **(d) proof:** Tier-1 — the provider is given a captured/in-memory logger; a fetch asserts an
-  INFO event with URL+status+latency is emitted, and an induced failure asserts an ERROR event
-  with the exception. The `%LOCALAPPDATA%` path resolution & directory creation is an observable
-  verified at Tier-3 smoke (the log file appears on disk after a real run).
+- **(c) contract:** this seam carries **two distinct facets**, stated separately so each is
+  independently falsifiable:
+  - **(c-i) in-process diagnostics** (the provider ↔ `ILogger` call): a successful fetch emits
+    exactly one **INFO** event carrying the request URL, HTTP status, and latency; a failed fetch
+    emits exactly one **ERROR** event carrying the exception (and its stack trace). No log content
+    is ever surfaced in the UI.
+  - **(c-ii) on-disk / host-OS** (the declared channel — Serilog ↔ filesystem): Serilog,
+    configured with a rolling **file** sink, **writes those events as rendered lines to a file**
+    under the configured log directory, **creating the directory if it does not yet exist**
+    (rooted at `%LOCALAPPDATA%\SimpleDesktopWeatherApp\logs\` in production). The written line
+    carries the structured event text (so the URL and status are recoverable from the file on
+    disk). Nullability: the log directory resolves from `%LOCALAPPDATA%` (always set on Windows);
+    if unresolvable the app falls back to a relative `logs\` folder rather than crashing.
+- **(d) proof:**
+  - **(c-ii), Tier-1 boundary-crossing — the seam's real proof:** configure a real Serilog logger
+    with a `File` sink pointed at a **fresh, not-yet-existing** temp directory, wrap it as
+    `ILogger<OpenMeteoWeatherProvider>` (via `Serilog.Extensions.Logging`), inject it into the
+    provider, run a fetch (Open-Meteo stubbed by WireMock), then **flush/dispose** the logger and
+    assert (1) the temp directory **was created** and (2) the written log file **contains** a line
+    with the request URL and `200`. This is **real file I/O on the filesystem side** — it crosses
+    the `persistent-on-disk-state` + `host-OS` channel the seam is classed for, replacing the
+    earlier in-memory-logger proof that only pinned (c-i).
+  - **(c-i), Tier-1 complementary unit check:** a capturing `ILogger` asserts the provider emits
+    the single INFO (URL+status+latency) on success and an ERROR on failure.
+  - The `%LOCALAPPDATA%`-specific path resolution remains a **Tier-3** smoke observable (the real
+    log file appears under `%LOCALAPPDATA%` after a packaged run); the directory-creation and
+    file-write contract itself is now proven at Tier-1.
 
 ### Seam 3: appsettings.json → LocationOptions binding
 - **(a) class:** `persistent-on-disk-state`, **internal** (we author the file).
@@ -198,3 +214,27 @@ project as the Tier-1 replay fixture.
 - **(d) proof:** Tier-1 — a sample config section binds to the expected `LocationOptions`
   (round-trip), and a missing/empty section trips the validation error rather than producing a
   silent `(0,0,null)`.
+
+## Feature-doc-gauntlet sign-off
+
+- **Result:** fail
+- **Date:** 2026-06-29
+- **Summary:** Seams 1 and 3 are genuinely proven and all doc/ADR-principle and cross-artefact
+  checks passed; Seam 2 (Serilog → rolling log file), classed `persistent-on-disk-state` +
+  `host-OS`, has no automated proof that crosses the channel it declares — its Tier-1 (d) asserts
+  in-memory `ILogger` method calls via a `CapturingLogger` that never touches the file sink, the
+  filesystem, or the `%LOCALAPPDATA%` path; the real disk/host-OS contract is deferred to manual
+  Tier-3 smoke only.
+- **Leaves:** check-seam-cynicism (fail), check-doc-adr-consistency (pass), check-artefact-consistency (pass)
+- **Open findings (route to `/fix-feature-docs`):**
+  1. Seam 2 (d) / Plan Task 8 — the declared channel (bytes landing in a rolling file under
+     `%LOCALAPPDATA%`, with directory-creation as the host-OS contract) is proven by no automated
+     boundary-crossing test; the `CapturingLogger` mocks the sink. **Settleable in-session** — a
+     file-sink-to-temp-dir round-trip is a cheap, deterministic local proof needing no external service.
+  2. Seam 2 (c) welds two contracts together — an in-process diagnostics contract (provider emits
+     INFO/ERROR) and the on-disk/host-OS contract. Fix should either split the row and give the
+     on-disk contract a real file-sink Tier-1 proof, or downgrade the row to the in-process
+     diagnostics seam it actually proves and record the disk contract as unproven below Tier-3.
+- **Non-gating note:** Seam 3's binding test uses a synthetic temp file, so the shipped
+  `appsettings.json` seed values are never round-tripped by an automated test (contract proven,
+  artifact content not pinned). Plus two minor glossary observations (add a `Condition` entry).
