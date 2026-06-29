@@ -11,6 +11,8 @@ Features are listed in delivery order. Each Feature gets its own `/brainstorming
 
 ## Feature 1: Show Current Conditions for one location 🔫 *tracer bullet*
 
+**Status:** **Published to ADO** — Feature [#95069](https://dev.azure.com/Enate/Factory%20DevTest/_workitems/edit/95069), 2026-06-29. Gauntlet: pass.
+
 On launch, the app fetches and displays the Current Conditions for a single hard-coded Location (a fixed coordinate) from Open-Meteo, showing temperature and a readable Condition in a WPF window.
 
 **Out of scope:** Place Search, the Saved Locations list, Default/Active switching, Forecast, Unit Preference (fixed to metric), and the full Stale/Last-Known fallback — a basic "couldn't load" message is enough, but the app must not crash.
