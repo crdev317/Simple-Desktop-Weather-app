@@ -47,12 +47,12 @@ tests/
     OpenMeteoWeatherProviderTests.cs          — Tier 1 (WireMock) + Tier 2 (live, trait-gated)
     LocationOptionsBindingTests.cs
     CurrentConditionsViewModelTests.cs
-    LoggingTests.cs                           — Seam 2 Tier-1 assertion
+    LoggingTests.cs                           — Seam 2 Tier-1: file-sink on-disk proof + in-process diagnostics check
 ```
 
 **Seam → Task coverage map** (verified in self-review):
 - **Seam 1 (Open-Meteo current-weather HTTP, external):** Task 4 (Tier-1 WireMock replay of the captured fixture + malformed-body case = (d)) and Task 9 (Tier-2 live call = (d) against the real service).
-- **Seam 2 (Serilog → rolling log file):** Task 8 (Tier-1 captured-logger assertion of INFO-on-success / ERROR-on-failure = (d); the `%LOCALAPPDATA%` path is a Tier-3 smoke observable).
+- **Seam 2 (Serilog → rolling log file):** Task 8 — two proofs for the two facets: a **real Serilog file-sink boundary-crossing test** writing to a temp dir and asserting the file on disk + directory creation = (d) for the on-disk/host-OS channel (c-ii); plus a captured-logger unit check of INFO-on-success / ERROR-on-failure for the in-process diagnostics facet (c-i). The `%LOCALAPPDATA%`-specific path is a Tier-3 smoke observable.
 - **Seam 3 (appsettings.json → LocationOptions, internal):** Task 6 (binding round-trip + missing-section validation = (d)).
 
 ---
@@ -102,6 +102,10 @@ dotnet add src/WeatherApp package Serilog.Sinks.File
 dotnet add tests/WeatherApp.Tests package FluentAssertions
 dotnet add tests/WeatherApp.Tests package WireMock.Net
 dotnet add tests/WeatherApp.Tests package Microsoft.Extensions.Configuration.Json
+# Serilog — needed by Task 8's on-disk file-sink boundary-crossing test (Seam 2 (c-ii) proof)
+dotnet add tests/WeatherApp.Tests package Serilog
+dotnet add tests/WeatherApp.Tests package Serilog.Sinks.File
+dotnet add tests/WeatherApp.Tests package Serilog.Extensions.Logging
 ```
 
 - [ ] **Step 4: Set `Nullable` + `ImplicitUsings` enabled in every csproj**
@@ -832,9 +836,11 @@ git commit -m "feat(core): CurrentConditionsViewModel with Failed-on-error spine
 - Modify: `src/WeatherApp.Core/OpenMeteoWeatherProvider.cs`
 - Test: `tests/WeatherApp.Tests/LoggingTests.cs`
 
-> **Seam 2 (c) contract:** a successful fetch emits one INFO event carrying request URL + HTTP status + latency; a failed fetch emits one ERROR event carrying the exception. (The `%LOCALAPPDATA%` rolling-file path is wired in Task 9's WPF bootstrap and verified at Tier-3 smoke.)
+> **Seam 2 (c) contract — two facets:** **(c-i) in-process diagnostics** — a successful fetch emits one INFO event (request URL + HTTP status + latency); a failed fetch emits one ERROR event (the exception). **(c-ii) on-disk / host-OS** (the declared channel) — Serilog's file sink **writes those events as lines to a file on disk under the configured log directory, creating the directory if absent**. Both facets are proven at Tier-1 below; the `%LOCALAPPDATA%`-specific path stays a Tier-3 smoke observable.
 
-- [ ] **Step 1: Write the failing tests using a capturing `ILogger`**
+- [ ] **Step 1: Write the failing tests — the in-process diagnostics check AND the on-disk file-sink boundary-crossing test**
+
+The `CapturingLogger` tests pin (c-i). The file-sink test pins (c-ii) by writing through a real Serilog `File` sink to a fresh temp directory and reading the bytes back off disk — real I/O on the filesystem side, so the proof crosses the channel the seam is classed for (it does **not** mock the sink).
 
 ```csharp
 using FluentAssertions;
@@ -897,6 +903,43 @@ public class LoggingTests : IDisposable
         logger.Lines.Should().Contain(l => l.Level == LogLevel.Error);
     }
 
+    // (c-ii) on-disk / host-OS: the real boundary-crossing proof — a live Serilog File sink, a
+    // not-yet-existing temp directory, and the written bytes read back off disk. No mocked sink.
+    [Fact]
+    public async Task Successful_fetch_writes_a_log_line_to_a_real_file_and_creates_the_directory()
+    {
+        var body = File.ReadAllText("Fixtures/open-meteo-london-current.json");
+        _server.Given(Request.Create().WithPath("/v1/forecast").UsingGet())
+               .RespondWith(Response.Create().WithStatusCode(200).WithBody(body));
+
+        // A directory that does NOT exist yet — proves the host-OS directory-creation facet.
+        var logDir = Path.Combine(Path.GetTempPath(), "weatherapp-logtest-" + Guid.NewGuid().ToString("N"));
+        var logPath = Path.Combine(logDir, "log.txt");
+        try
+        {
+            using (var serilog = new Serilog.LoggerConfiguration()
+                       .MinimumLevel.Information()
+                       .WriteTo.File(logPath)
+                       .CreateLogger())
+            {
+                var factory = new Serilog.Extensions.Logging.SerilogLoggerFactory(serilog);
+                ILogger<OpenMeteoWeatherProvider> logger = factory.CreateLogger<OpenMeteoWeatherProvider>();
+                var http = new HttpClient { BaseAddress = new Uri(_server.Urls[0]) };
+
+                await new OpenMeteoWeatherProvider(http, logger)
+                    .GetCurrentConditionsAsync(new Coordinates(51.51, -0.13), CancellationToken.None);
+            }   // disposing the Serilog logger flushes the file sink to disk
+
+            Directory.Exists(logDir).Should().BeTrue();          // host-OS: directory was created
+            var written = File.ReadAllText(logPath);
+            written.Should().Contain("v1/forecast").And.Contain("200");   // the event crossed to disk
+        }
+        finally
+        {
+            if (Directory.Exists(logDir)) Directory.Delete(logDir, recursive: true);
+        }
+    }
+
     public void Dispose() => _server.Dispose();
 }
 ```
@@ -904,7 +947,7 @@ public class LoggingTests : IDisposable
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `dotnet test --filter LoggingTests`
-Expected: FAIL — provider does not log yet (no INFO line / no ERROR line).
+Expected: FAIL — provider does not log yet, so neither the captured-logger lines nor the on-disk file content appear.
 
 - [ ] **Step 3: Add logging + latency + exception path to the provider**
 
@@ -1265,6 +1308,27 @@ git status   # expect clean
 - [ ] A failed/slow fetch shows "Couldn't load the weather." and never crashes (Principle #3); fetch is async + cancellable with a bounded timeout (Principle #4).
 - [ ] No secret stored anywhere (keyless Open-Meteo — Principle #1 not engaged).
 - [ ] **Seam 1** covered by Task 4 (Tier-1 WireMock replay of captured fixture + malformed body) and Task 9 (Tier-2 live).
-- [ ] **Seam 2** covered by Task 8 (Tier-1 INFO/ERROR assertions) + Task 11 Tier-3 path observable.
+- [ ] **Seam 2** covered by Task 8 — a real Serilog file-sink Tier-1 test crossing the on-disk/host-OS channel (writes to a temp dir, asserts the file content + directory creation = (c-ii) (d)) plus a captured-logger check of INFO/ERROR (c-i); `%LOCALAPPDATA%`-specific path is the Task 11 Tier-3 observable.
 - [ ] **Seam 3** covered by Task 6 (binding round-trip + fail-fast validation).
 - [ ] Tier-1 runs every commit; Tier-2 is trait-gated off the PR gate; Tier-3 is the manual smoke in Task 11.
+
+---
+
+## Fix-pass log — feature-doc-gauntlet run 1 (2026-06-29)
+
+Run 1 failed (`reason: feature-docs`) on a single root cause raised by `check-seam-cynicism`
+(arriving as two findings). Resolution: option (a) — strengthen Seam 2's proof so it crosses its
+declared channel (human-endorsed before editing).
+
+| Root cause | Fix (Spec + Plan, jointly) | Closure check |
+|---|---|---|
+| Seam 2's automated (d) never crossed its declared `persistent-on-disk-state` + `host-OS` channel — the `CapturingLogger` mocked the sink; the on-disk contract was deferred to manual Tier-3. Its (c) also welded an in-process diagnostics contract to the on-disk contract. | **Spec Seam 2:** split (c) into **(c-i)** in-process diagnostics and **(c-ii)** on-disk/host-OS; rewrote (d) so (c-ii) is proven by a **real Serilog `File` sink → temp dir** Tier-1 test (asserts the file content on disk + directory creation), keeping the captured-logger check for (c-i). **Plan:** Task 1 adds `Serilog`/`Serilog.Sinks.File`/`Serilog.Extensions.Logging` to the Tests project; Task 8 gains the file-sink boundary-crossing test; coverage map + Definition of done updated. | `grep` for `mocks the sink` / `in-memory logger` as the seam's proof returns only the historical gauntlet sign-off (run-1 record), not any live contract restatement. Spec Seam 2 (d) now reads "real file I/O on the filesystem side"; Plan Task 8 writes through a live `File` sink and reads the bytes back. |
+
+**Observations deliberately left (non-gating, off the edit path):**
+- Add a `Condition` entry to `business-domain-context.md` — the glossary is higher-authority and
+  domain-owned; a vocabulary addition belongs in `/grill-with-docs`, not a doc-fix pass. Left for the human.
+- Seam 3's binding test uses a synthetic temp file rather than round-tripping the shipped
+  `appsettings.json` — closing it would couple the Tests project to the WPF project's output
+  (Tests references Core only by design). Not worth the coupling for a non-gating note; left as-is.
+
+The conductor re-runs the **full** gauntlet (all three leaves, fresh) next — this fix pass clears nothing by itself.
