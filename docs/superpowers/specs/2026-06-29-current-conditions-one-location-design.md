@@ -217,24 +217,25 @@ project as the Tier-1 replay fixture.
 
 ## Feature-doc-gauntlet sign-off
 
-- **Result:** fail
+- **Result:** pass
 - **Date:** 2026-06-29
-- **Summary:** Seams 1 and 3 are genuinely proven and all doc/ADR-principle and cross-artefact
-  checks passed; Seam 2 (Serilog → rolling log file), classed `persistent-on-disk-state` +
-  `host-OS`, has no automated proof that crosses the channel it declares — its Tier-1 (d) asserts
-  in-memory `ILogger` method calls via a `CapturingLogger` that never touches the file sink, the
-  filesystem, or the `%LOCALAPPDATA%` path; the real disk/host-OS contract is deferred to manual
-  Tier-3 smoke only.
-- **Leaves:** check-seam-cynicism (fail), check-doc-adr-consistency (pass), check-artefact-consistency (pass)
-- **Open findings (route to `/fix-feature-docs`):**
-  1. Seam 2 (d) / Plan Task 8 — the declared channel (bytes landing in a rolling file under
-     `%LOCALAPPDATA%`, with directory-creation as the host-OS contract) is proven by no automated
-     boundary-crossing test; the `CapturingLogger` mocks the sink. **Settleable in-session** — a
-     file-sink-to-temp-dir round-trip is a cheap, deterministic local proof needing no external service.
-  2. Seam 2 (c) welds two contracts together — an in-process diagnostics contract (provider emits
-     INFO/ERROR) and the on-disk/host-OS contract. Fix should either split the row and give the
-     on-disk contract a real file-sink Tier-1 proof, or downgrade the row to the in-process
-     diagnostics seam it actually proves and record the disk contract as unproven below Tier-3.
-- **Non-gating note:** Seam 3's binding test uses a synthetic temp file, so the shipped
-  `appsettings.json` seed values are never round-tripped by an automated test (contract proven,
-  artifact content not pinned). Plus two minor glossary observations (add a `Condition` entry).
+- **Summary:** All three leaves passed on re-run (run 2). Every declared seam now carries a
+  falsifiable (c) and a real boundary-crossing (d); the design crosses no other channel class
+  without an inventory row. Seam 2's run-1 gap (the mocked sink) is genuinely closed — (c) is split
+  into in-process diagnostics (c-i) and on-disk/host-OS (c-ii), and (c-ii) is proven by a real
+  Serilog `File` sink writing to a temp dir with the bytes read back off disk (directory creation +
+  URL/200 content). Seam 1 (external) is grounded against a supervised live call dated 2026-06-29
+  with first-contact auth pinned; Seam 3 is proven by a real config round-trip. No principle or
+  authority-order drift.
+- **Leaves:** check-seam-cynicism (pass), check-doc-adr-consistency (pass), check-artefact-consistency (pass)
+- **History:** run 1 (2026-06-29) failed on Seam 2's proof not crossing its declared channel;
+  closed via `/fix-feature-docs` (see the Plan's fix-pass log), re-run clean.
+- **Non-gating observations carried forward:** (1) add a `Condition` entry to
+  `business-domain-context.md` via `/grill-with-docs` (glossary is domain-owned); (2) Seam 3's
+  binding test uses a synthetic temp file, so the shipped `appsettings.json` seed values are pinned
+  only at Tier-3 (closing it would couple Tests to the WPF project, deliberately avoided);
+  (3) Seam 2's `%LOCALAPPDATA%` path specialization & rolling stay Tier-3 observables (the channel
+  contract is proven at Tier-1). None gate; revisit Seam 1's grid-snapping note when Feature 2
+  (Place Search) makes returned coordinates identity-bearing.
+
+**Cleared for `/enate-to-stories`.**
