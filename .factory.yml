@@ -1,0 +1,13 @@
+# Enate SDLC Factory — tracker configuration (ADR-0014).
+#
+# The presence of this `ado:` block selects Azure DevOps as the issue tracker for
+# this product. Factory skills (publish-feature, feature-doc-gauntlet, enate-to-stories,
+# triage, check-security-design, …) read this file at the repo root and fail closed:
+#   - present with `ado.org` + `ado.project`  → Azure DevOps mode
+#   - absent                                  → GitHub mode
+#   - present but missing org/project / unparseable → STOP (never silently default)
+#
+# The repo host stays GitHub (code + PRs + CI); the *work-item tracker* is Azure DevOps.
+ado:
+  org: Enate
+  project: Factory DevTest
