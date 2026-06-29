@@ -1,0 +1,26 @@
+# Placeholder CI — exists so branch protection can require a stable `ci` check from commit one.
+# It does nothing functional yet. When build / lint / test land, add them as steps (or jobs that
+# this `ci` job depends on) BEHIND this same `ci` name, so the branch-protection rule that requires
+# `ci` never needs revisiting. See CONTRIBUTING.md; the testing contract lands via /init-tech-context.
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# Least privilege from commit one. The default GITHUB_TOKEN is over-scoped; pin it down now so
+# later steps start from read-only and widen deliberately, never silently inherit write access.
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: ci
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "no checks yet — placeholder pipeline (see CONTRIBUTING.md)"
+      # When real steps land and you add `uses:` actions, PIN THEM BY COMMIT SHA (not a floating
+      # tag like @v4) and trail the version in a comment — `uses: actions/checkout@<sha> # v4.3.1`.
+      # SHA-pinning is the supply-chain baseline; a tag can be force-moved under you, a SHA cannot.
